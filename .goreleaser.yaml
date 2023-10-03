@@ -1,0 +1,159 @@
+git:
+  ignore_tags:
+    - "{{ if not .IsNightly }}nightly{{ end }}"
+
+metadata:
+  mod_timestamp: "{{ .CommitTimestamp }}"
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - "386"
+      - amd64
+      - arm
+      - arm64
+    goarm:
+      - "7"
+    ignore:
+      - goos: windows
+        goarch: arm
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{ .CommitDate }} -X main.builtBy=goreleaser -X main.treeState={{ .IsGitDirty }}
+
+universal_binaries:
+  - replace: false
+
+dockers:
+  - image_templates:
+      - "braveokafor/healthchecker:v{{ .Version }}-amd64"
+      - "ghcr.io/braveokafor/healthchecker:v{{ .Version }}-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description={{ .ProjectName }}
+      - --label=org.opencontainers.image.url={{.GitURL}}"
+      - --label=org.opencontainers.image.source={{.GitURL}}"
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{.Date}}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=MIT
+      - --platform=linux/amd64
+  - image_templates:
+      - "braveokafor/healthchecker:v{{ .Version }}-arm64"
+      - "ghcr.io/braveokafor/healthchecker:v{{ .Version }}-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description={{ .ProjectName }}
+      - --label=org.opencontainers.image.url={{.GitURL}}"
+      - --label=org.opencontainers.image.source={{.GitURL}}"
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{.Date}}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=MIT
+      - --platform=linux/arm64
+    goarch: arm64
+
+docker_manifests:
+  - name_template: "braveokafor/healthchecker:v{{ .Version }}"
+    image_templates:
+      - "braveokafor/healthchecker:v{{ .Version }}-amd64"
+      - "braveokafor/healthchecker:v{{ .Version }}-arm64"
+  - name_template: "ghcr.io/braveokafor/healthchecker:v{{ .Version }}"
+    image_templates:
+      - "ghcr.io/braveokafor/healthchecker:v{{ .Version }}-amd64"
+      - "ghcr.io/braveokafor/healthchecker:v{{ .Version }}-arm64"
+  - name_template: "{{ if not .IsNightly }}braveokafor/healthchecker:latest{{ end }}"
+    image_templates:
+      - "braveokafor/healthchecker:v{{ .Version }}-amd64"
+      - "braveokafor/healthchecker:v{{ .Version }}-arm64"
+  - name_template: "{{ if not .IsNightly }}ghcr.io/braveokafor/healthchecker:latest{{ end }}"
+    image_templates:
+      - "ghcr.io/braveokafor/healthchecker:v{{ .Version }}-amd64"
+      - "ghcr.io/braveokafor/healthchecker:v{{ .Version }}-arm64"
+
+nfpms:
+  - maintainer: Brave Okafor <okaforbrave@gmail.com>
+    description: Health Checker is a utility written in Go for conducting health checks on HTTP services, crucial for environments using distroless Docker images where traditional package managers and shell-based health checks are not possible.
+    homepage: https://github.com/braveokafor/healthchecker
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+
+release:
+  draft: true
+  github:
+    owner: braveokafor
+    name: healthchecker
+
+archives:
+  - name_template: >-
+      {{- .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end -}}
+    format_overrides:
+      - goos: windows
+        format: zip
+    builds_info:
+      group: root
+      owner: root
+    files:
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^test:"
+      - "^chore"
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+      - go mod tidy
+  groups:
+    - title: Dependency updates
+      regexp: '^.*?(feat|fix)\(deps\)!?:.+$'
+      order: 300
+    - title: "New Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 100
+    - title: "Security updates"
+      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+$'
+      order: 150
+    - title: "Bug fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 200
+    - title: "Documentation updates"
+      regexp: ^.*?doc(\([[:word:]]+\))??!?:.+$
+      order: 400
+    - title: "Build process updates"
+      regexp: ^.*?build(\([[:word:]]+\))??!?:.+$
+      order: 400
+    - title: Other work
+      order: 9999
+
+sboms:
+  - artifacts: archive
