@@ -1,0 +1,152 @@
+name: Go
+
+on:
+  push:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - "main"
+      - "feat/*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      statuses: write
+    outputs:
+      golintOutcome: ${{ steps.golangci-lint.outcome }}
+      checkovOutcome: ${{ steps.checkov.outcome }}
+      superlinterOutcome: ${{ steps.super-linter.outcome }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Run Go Lint
+        id: golangci-lint
+        continue-on-error: true
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.54
+
+      - name: Run Checkov
+        id: checkov
+        uses: bridgecrewio/checkov-action@v12.2500.0
+        continue-on-error: true
+        with:
+          directory: ${{ env.DOCKER_CONTEXT_PATH }}
+          quiet: true
+
+      - name: Run Super-Linter
+        id: super-linter
+        uses: super-linter/super-linter@v5
+        continue-on-error: true
+        env:
+          DEFAULT_BRANCH: main
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VALIDATE_ALL_CODEBASE: false
+          VALIDATE_GO: true
+
+  test:
+    runs-on: ubuntu-latest
+    outputs:
+      testOutcome: ${{ steps.test-go-app.outcome }}
+      testLog: ${{ steps.test-go-app.outputs.output }}
+      buildOutcome: ${{ steps.build-go-app.outcome }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.21.1
+
+      - name: Test Go App
+        id: test-go-app
+        working-directory: ${{ env.DOCKER_CONTEXT_PATH }}
+        continue-on-error: true
+        run: |
+          OUTPUT=$(go test -v -race -coverprofile=coverage.txt -covermode=atomic -tags=integration ./...)
+
+          echo "$OUTPUT"
+          cat coverage.txt
+
+          OUTPUT=$(echo "$OUTPUT" | jq -R -s -c .)
+          echo "output=$OUTPUT" >> $GITHUB_OUTPUT
+
+      - name: Build Go App
+        id: build-go-app
+        working-directory: ${{ env.DOCKER_CONTEXT_PATH }}
+        continue-on-error: true
+        run: |
+          go build .
+
+  comment-on-pr:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: PR Comment
+        uses: actions/github-script@v6
+        env:
+          testLog: "${{ needs.test.outputs.testLog }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const golintOutcome = "${{ needs.lint.outputs.golintOutcome }}";
+            const checkovOutcome = "${{ needs.lint.outputs.checkovOutcome }}";
+            const superlinterOutcome = "${{ needs.lint.outputs.superlinterOutcome }}";
+            const testOutcome = "${{ needs.test.outputs.testOutcome }}";
+            const testLog = JSON.parse(process.env.testLog);
+            const buildOutcome = "${{ needs.test.outputs.buildOutcome }}";
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment => comment.user.type === 'Bot' && comment.body.includes('Go Lint Results'));
+
+            const output = `#### Go Lint Results 🧹: \`${golintOutcome}\`
+            \n#### Checkov Results 🛡️: \`${checkovOutcome}\`
+            \n#### Super-linter Results 🖌️: \`${superlinterOutcome}\`
+            \n#### Test Results 🧪: \`${testOutcome}\`
+            \n#### Build Results 🏗️: \`${buildOutcome}\`
+            <details><summary>Test Logs</summary>
+
+            \`\`\`\n
+            ${testLog}
+            \`\`\`
+
+            </details>`;
+                             
+            if (botComment) {
+              github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              })
+            } else {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              })
+            }
